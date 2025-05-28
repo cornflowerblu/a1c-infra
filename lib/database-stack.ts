@@ -3,7 +3,6 @@ import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import { CdkEksStack } from './cdk-eks-stack';
 
 export class DatabaseStack extends cdk.NestedStack {
   public readonly dbCluster: rds.DatabaseCluster;
