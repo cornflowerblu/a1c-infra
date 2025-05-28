@@ -1,0 +1,48 @@
+FROM node:18-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+WORKDIR /app
+
+# Copy package files
+COPY /Users/rurich/development/a1c-project/package.json /Users/rurich/development/a1c-project/package-lock.json ./
+COPY /Users/rurich/development/a1c-project/web ./web/
+COPY /Users/rurich/development/a1c-project/shared ./shared/
+
+# Install dependencies
+RUN npm ci
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app .
+
+# Build the application
+RUN npm run build web
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create a non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy necessary files
+COPY --from=builder /app/web/.next/standalone ./
+COPY --from=builder /app/web/.next/static ./web/.next/static
+COPY --from=builder /app/web/public ./web/public
+
+# Set the correct permissions
+RUN chown -R nextjs:nodejs /app
+
+# Switch to non-root user
+USER nextjs
+
+# Expose the port
+EXPOSE 3000
+
+# Set the command to run the server
+CMD ["node", "web/server.js"]

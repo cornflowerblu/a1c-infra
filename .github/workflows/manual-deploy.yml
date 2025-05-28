@@ -1,0 +1,80 @@
+name: Manual Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      frontend_tag:
+        description: 'Frontend image tag (leave empty for latest)'
+        required: false
+      backend_tag:
+        description: 'Backend image tag (leave empty for latest)'
+        required: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_NAME: a1c-project
+  NODE_VERSION: '18'
+
+jobs:
+  deploy:
+    name: Manual Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        
+      - name: Set image tags
+        run: |
+          FRONTEND_TAG=${{ github.event.inputs.frontend_tag || 'latest' }}
+          BACKEND_TAG=${{ github.event.inputs.backend_tag || 'latest' }}
+          
+          echo "FRONTEND_IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-frontend:${FRONTEND_TAG}" >> $GITHUB_ENV
+          echo "BACKEND_IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-backend:${BACKEND_TAG}" >> $GITHUB_ENV
+          
+      - name: Update image tags in CDK stack
+        run: |
+          sed -i "s|image: ecs.ContainerImage.fromRegistry('your-frontend-image:latest')|image: ecs.ContainerImage.fromRegistry('${{ env.FRONTEND_IMAGE }}')|g" lib/a1c-infra-stack.ts
+          sed -i "s|image: ecs.ContainerImage.fromRegistry('your-backend-image:latest')|image: ecs.ContainerImage.fromRegistry('${{ env.BACKEND_IMAGE }}')|g" lib/a1c-infra-stack.ts
+          sed -i "s|const environment = 'dev';|const environment = '${{ github.event.inputs.environment }}';|g" lib/a1c-infra-stack.ts
+          
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+        
+      - name: CDK Bootstrap
+        run: cdk bootstrap
+        
+      - name: CDK Synth
+        run: cdk synth
+        
+      - name: CDK Deploy
+        run: cdk deploy --require-approval never

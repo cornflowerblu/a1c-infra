@@ -1,0 +1,53 @@
+FROM node:18-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+WORKDIR /app
+
+# Copy package files
+COPY /Users/rurich/development/a1c-project/package.json /Users/rurich/development/a1c-project/package-lock.json ./
+COPY /Users/rurich/development/a1c-project/api ./api/
+COPY /Users/rurich/development/a1c-project/shared ./shared/
+COPY /Users/rurich/development/a1c-project/prisma ./prisma/
+
+# Install dependencies
+RUN npm ci
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app .
+
+# Build the application
+RUN npm run build api
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create a non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nestjs
+
+# Copy necessary files
+COPY --from=builder /app/dist/api ./dist/api
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/prisma ./prisma
+
+# Set the correct permissions
+RUN chown -R nestjs:nodejs /app
+
+# Switch to non-root user
+USER nestjs
+
+# Expose the port
+EXPOSE 3333
+
+# Set the command to run the server
+CMD ["node", "dist/api/main.js"]

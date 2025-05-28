@@ -1,0 +1,131 @@
+name: Deploy A1C Project
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'bin/**'
+      - '.github/workflows/**'
+      - 'Dockerfile.*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_NAME: a1c-project
+  NODE_VERSION: '18'
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        
+      - name: Extract branch name
+        shell: bash
+        run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
+        
+      - name: Set image tags
+        run: |
+          echo "FRONTEND_IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-frontend:${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "BACKEND_IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-backend:${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "FRONTEND_IMAGE_LATEST=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-frontend:latest" >> $GITHUB_ENV
+          echo "BACKEND_IMAGE_LATEST=${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}-backend:latest" >> $GITHUB_ENV
+          
+      - name: Create ECR repositories if they don't exist
+        run: |
+          aws ecr describe-repositories --repository-names ${{ env.APP_NAME }}-frontend --region ${{ env.AWS_REGION }} || aws ecr create-repository --repository-name ${{ env.APP_NAME }}-frontend --region ${{ env.AWS_REGION }}
+          aws ecr describe-repositories --repository-names ${{ env.APP_NAME }}-backend --region ${{ env.AWS_REGION }} || aws ecr create-repository --repository-name ${{ env.APP_NAME }}-backend --region ${{ env.AWS_REGION }}
+          
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}
+            ${{ env.FRONTEND_IMAGE_LATEST }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}
+            ${{ env.BACKEND_IMAGE_LATEST }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          
+      - name: Update image tags in CDK stack
+        run: |
+          sed -i "s|image: ecs.ContainerImage.fromRegistry('your-frontend-image:latest')|image: ecs.ContainerImage.fromRegistry('${{ env.FRONTEND_IMAGE }}')|g" lib/a1c-infra-stack.ts
+          sed -i "s|image: ecs.ContainerImage.fromRegistry('your-backend-image:latest')|image: ecs.ContainerImage.fromRegistry('${{ env.BACKEND_IMAGE }}')|g" lib/a1c-infra-stack.ts
+          sed -i "s|const environment = 'dev';|const environment = '${{ github.event.inputs.environment || 'dev' }}';|g" lib/a1c-infra-stack.ts
+          
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+        
+      - name: CDK Bootstrap
+        run: cdk bootstrap
+        
+      - name: CDK Synth
+        run: cdk synth
+        
+      - name: CDK Deploy
+        run: cdk deploy --require-approval never
+        
+      - name: Update Clerk secrets
+        run: |
+          aws secretsmanager update-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment || 'dev' }}/clerk-publishable" \
+            --secret-string "{\"publishableKey\":\"${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}\"}" \
+            --region ${{ env.AWS_REGION }}
+            
+          aws secretsmanager update-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment || 'dev' }}/clerk-secret" \
+            --secret-string "{\"secretKey\":\"${{ secrets.CLERK_SECRET_KEY }}\"}" \
+            --region ${{ env.AWS_REGION }}
+            
+          aws secretsmanager update-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment || 'dev' }}/clerk-webhook" \
+            --secret-string "{\"webhookSecret\":\"${{ secrets.CLERK_WEBHOOK_SECRET }}\"}" \
+            --region ${{ env.AWS_REGION }}

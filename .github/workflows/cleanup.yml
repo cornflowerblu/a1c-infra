@@ -1,0 +1,67 @@
+name: Cleanup Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to clean up'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+      confirmation:
+        description: 'Type "DELETE" to confirm deletion'
+        required: true
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  APP_NAME: a1c-project
+  NODE_VERSION: '18'
+
+jobs:
+  cleanup:
+    name: Cleanup Resources
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    if: github.event.inputs.confirmation == 'DELETE'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+        
+      - name: Destroy CDK Stack
+        run: cdk destroy --force
+        
+      - name: Clean up ECR repositories
+        run: |
+          aws ecr delete-repository --repository-name ${{ env.APP_NAME }}-frontend --force || true
+          aws ecr delete-repository --repository-name ${{ env.APP_NAME }}-backend --force || true
+          
+      - name: Clean up Secrets
+        run: |
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/clerk-publishable" --force-delete-without-recovery || true
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/clerk-secret" --force-delete-without-recovery || true
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/clerk-webhook" --force-delete-without-recovery || true
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/db-credentials" --force-delete-without-recovery || true
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/db-connection" --force-delete-without-recovery || true
+          aws secretsmanager delete-secret --secret-id "${{ env.APP_NAME }}/${{ github.event.inputs.environment }}/jwt-secret" --force-delete-without-recovery || true
