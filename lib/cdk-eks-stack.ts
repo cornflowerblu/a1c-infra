@@ -6,7 +6,6 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { KubectlV32Layer } from "@aws-cdk/lambda-layer-kubectl-v32";
 // import { deployNginxSample } from "./alb-service-test";
 
-
 interface CdkEksStackProps extends cdk.StackProps {
   vpc: ec2.Vpc;
 }
@@ -54,13 +53,23 @@ export class CdkEksStack extends cdk.NestedStack {
       ],
     });
 
-
-
     // Create a security group for the EKS cluster
     this.securityGroup = new ec2.SecurityGroup(this, "A1C-EKSSecurityGroup10", {
       vpc: props.vpc,
       allowAllOutbound: true,
       description: "Security group for A1C EKS cluster10",
+    });
+
+    // Create IAM role for node group with CloudWatch Container Insights permissions
+    const nodeRole = new iam.Role(this, "EksNodeRole", {
+      assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSWorkerNodePolicy"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEKS_CNI_Policy"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEC2ContainerRegistryReadOnly"),
+        // Add CloudWatch policy for Container Insights
+        iam.ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy"),
+      ],
     });
 
     this.cluster.addNodegroupCapacity("standard-nodes", {
@@ -76,6 +85,7 @@ export class CdkEksStack extends cdk.NestedStack {
         role: "general",
         "workload-type": "temporary",
       },
+      nodeRole: nodeRole,
     });
 
     // Associate the security group with the cluster
@@ -84,16 +94,26 @@ export class CdkEksStack extends cdk.NestedStack {
     // Create VPC endpoints for AWS services
     this.createVpcEndpoints(props.vpc);
 
+    // Create Fargate execution role with CloudWatch permissions
+    const fargateExecutionRole = new iam.Role(this, "FargateExecutionRole", {
+      assumedBy: new iam.ServicePrincipal("eks-fargate-pods.amazonaws.com"),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSFargatePodExecutionRolePolicy"),
+        iam.ManagedPolicy.fromAwsManagedPolicyName("CloudWatchAgentServerPolicy"),
+      ],
+    });
+
     // Add Fargate profile for the application
     this.cluster.addFargateProfile("DefaultFargateProfile", {
       selectors: [
         { namespace: "default" },
         { namespace: "kube-system" },
         { namespace: "kube-system", labels: { "k8s-app": "kube-dns" } },
+        { namespace: "amazon-cloudwatch" }, // Add namespace for CloudWatch
       ],
+      podExecutionRole: fargateExecutionRole,
     });
 
-    
     // Add Kubernetes manifests for common services
     // Example: Deploy metrics server
     this.cluster.addHelmChart("MetricsServer", {
@@ -105,6 +125,39 @@ export class CdkEksStack extends cdk.NestedStack {
           "--kubelet-preferred-address-types=InternalIP",
           "--kubelet-use-node-status-port",
         ],
+      },
+    });
+    
+    // Deploy CloudWatch Container Insights
+    this.cluster.addHelmChart("CloudWatchAgent", {
+      chart: "cloudwatch-agent",
+      repository: "https://aws.github.io/eks-charts",
+      namespace: "amazon-cloudwatch",
+      createNamespace: true,
+      values: {
+        clusterName: this.cluster.clusterName,
+        fargate: {
+          enabled: true,
+        },
+      },
+    });
+    
+    // Deploy Fluent Bit for Container Insights logs
+    this.cluster.addHelmChart("FluentBit", {
+      chart: "aws-for-fluent-bit",
+      repository: "https://aws.github.io/eks-charts",
+      namespace: "amazon-cloudwatch",
+      createNamespace: true,
+      values: {
+        cloudWatch: {
+          enabled: true,
+          region: this.region,
+          logGroupName: `/aws/containerinsights/${this.cluster.clusterName}/application`,
+        },
+        firehose: { enabled: false },
+        kinesis: { enabled: false },
+        elasticsearch: { enabled: false },
+        fargate: true,
       },
     });
 
@@ -186,6 +239,12 @@ export class CdkEksStack extends cdk.NestedStack {
 
       // Add VPC CNI add-on
       this.addEksAddon("VpcCniAddon", "vpc-cni");
+      
+      // Add EKS Pod Identity Agent add-on
+      this.addEksAddon("PodIdentityAgentAddon", "eks-pod-identity-agent");
+      
+      // Add CloudWatch Observability add-on
+      this.addEksAddon("CloudWatchObservabilityAddon", "amazon-cloudwatch-observability");
     } catch (error) {
       // Log detailed error information
       console.error(

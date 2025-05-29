@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rancher-cert
+  namespace: cattle-system
+spec:
+  secretName: rancher-cert-tls
+  issuerRef:
+    name: letsencrypt-a1c-project-cluster10
+    kind: ClusterIssuer
+  commonName: rancher.ngdegtm.com
+  dnsNames:
+    - rancher.ngdegtm.com
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
