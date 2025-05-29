@@ -10,5 +10,6 @@ export declare class CdkEksStack extends cdk.NestedStack {
     readonly securityGroup: ec2.SecurityGroup;
     constructor(scope: Construct, id: string, props: CdkEksStackProps);
     private createVpcEndpoints;
+    private addEksAddon;
 }
 export {};

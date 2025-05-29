@@ -6,12 +6,15 @@ import { DatabaseStack } from "./database-stack";
 import { RedisStack } from "./redis-stack";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
-export class A1CInfraStack extends cdk.Stack {
+export class A1CInfraStack10 extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    
+    cdk.CfnDeletionPolicy.RETAIN
+      
     //Create a new VPC for all resources
-    const vpc = new ec2.Vpc(this, "A1CProjectVPC", {
+    const vpc = new ec2.Vpc(this, "A1CProjectVPC10", {
       maxAzs: 3, // Use up to 3 Availability Zones for high availability
       natGateways: 1, // Use 1 NAT Gateway to save costs (use 3 for production)
       subnetConfiguration: [

@@ -4,6 +4,8 @@ import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as eks from "aws-cdk-lib/aws-eks";
 import * as iam from "aws-cdk-lib/aws-iam";
 import { KubectlV32Layer } from "@aws-cdk/lambda-layer-kubectl-v32";
+// import { deployNginxSample } from "./alb-service-test";
+
 
 interface CdkEksStackProps extends cdk.StackProps {
   vpc: ec2.Vpc;
@@ -26,13 +28,16 @@ export class CdkEksStack extends cdk.NestedStack {
     });
 
     // Create the EKS cluster
-    this.cluster = new eks.Cluster(this, "A1CProjectEksCluster", {
+    this.cluster = new eks.Cluster(this, "A1CProjectEksCluster10", {
       version: eks.KubernetesVersion.V1_32,
       kubectlLayer: new KubectlV32Layer(this, "1.32.4"),
       vpc: props.vpc,
       defaultCapacity: 0, // We'll define our own node groups
       role: clusterRole,
-      clusterName: "a1c-project-cluster",
+      clusterName: "a1c-project-cluster10",
+      albController: {
+        version: eks.AlbControllerVersion.V2_8_2,
+      },
       outputClusterName: true,
       outputConfigCommand: true,
       endpointAccess: eks.EndpointAccess.PUBLIC_AND_PRIVATE,
@@ -49,11 +54,13 @@ export class CdkEksStack extends cdk.NestedStack {
       ],
     });
 
+
+
     // Create a security group for the EKS cluster
-    this.securityGroup = new ec2.SecurityGroup(this, "A1C-EKSSecurityGroup", {
+    this.securityGroup = new ec2.SecurityGroup(this, "A1C-EKSSecurityGroup10", {
       vpc: props.vpc,
       allowAllOutbound: true,
-      description: "Security group for A1C EKS cluster",
+      description: "Security group for A1C EKS cluster10",
     });
 
     this.cluster.addNodegroupCapacity("standard-nodes", {
@@ -86,35 +93,7 @@ export class CdkEksStack extends cdk.NestedStack {
       ],
     });
 
-    // ALB Controller Service Account
-    const albServiceAccount = this.cluster.addServiceAccount(
-      "ALBControllerSA",
-      {
-        name: "aws-load-balancer-controller",
-        namespace: "kube-system",
-      }
-    );
-
-    albServiceAccount.role.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSLoadBalancingPolicy")
-    );
-
-    // Deploy the AWS Load Balancer Controller via Helm
-    this.cluster.addHelmChart("ALBController", {
-      chart: "aws-load-balancer-controller",
-      repository: "https://aws.github.io/eks-charts",
-      namespace: "kube-system",
-      release: "alb-controller",
-      values: {
-        clusterName: this.cluster.clusterName,
-        serviceAccount: {
-          create: true,
-          name: albServiceAccount.serviceAccountName,
-        },
-        region: this.region,
-      },
-    });
-
+    
     // Add Kubernetes manifests for common services
     // Example: Deploy metrics server
     this.cluster.addHelmChart("MetricsServer", {
@@ -134,6 +113,9 @@ export class CdkEksStack extends cdk.NestedStack {
       value: `aws eks update-kubeconfig --name ${this.cluster.clusterName} --region ${this.region}`,
       description: "Command to update kubectl config for the cluster",
     });
+
+    // Deploy NGINX sample with ALB Ingress
+    // deployNginxSample(this.cluster);
   }
 
   private createVpcEndpoints(vpc: ec2.Vpc): void {
