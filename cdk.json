@@ -2,7 +2,7 @@
   "app": "npx ts-node --prefer-ts-exts bin/a1c-infra.ts",
   "watch": {
     "include": [
-      "**"
+      "dist"
     ],
     "exclude": [
       "README.md",

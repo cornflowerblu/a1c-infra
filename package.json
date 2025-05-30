@@ -8,7 +8,12 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "deploy:full": "cdk deploy",
+    "deploy:eks-only": "cdk deploy --context eks-only=true",
+    "deploy:eks-existing-vpc": "cdk deploy --context eks-only=true --context vpc-id=vpc-015016081a2494f0e",
+    "deploy:helm": "cdk deploy --context eks-only=true --context update-helm=true --context vpc-id=vpc-015016081a2494f0e",
+    "deploy:addons": "cdk deploy --context eks-only=true --context update-addons=true --context vpc-id=vpc-015016081a2494f0e"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
